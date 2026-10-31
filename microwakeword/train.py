@@ -319,8 +319,11 @@ def train(model, config, data_processor):
             if ema_weights is None:
                 ema_weights = [tf.Variable(w, trainable=False) for w in model.weights]
             else:
+                # Ramp the decay up so the average isn't dominated by the
+                # random initial weights early on (the usual num_updates trick).
+                decay = min(ema_decay, (1 + training_step) / (10 + training_step))
                 for e, w in zip(ema_weights, model.weights):
-                    e.assign(ema_decay * e + (1 - ema_decay) * w)
+                    e.assign(decay * e + (1 - decay) * w)
 
         # Print the running statistics in the current validation epoch
         print(
