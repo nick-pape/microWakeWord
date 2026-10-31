@@ -206,6 +206,16 @@ def train(model, config, data_processor):
     loss = tf.keras.losses.BinaryCrossentropy(from_logits=False)
     optimizer = tf.keras.optimizers.Adam()
 
+    # Optional: "lr_schedule": "cosine" decays smoothly from the first phase's
+    # learning rate to the last phase's over the whole run (after
+    # "warmup_steps" of linear warmup) instead of holding each phase's rate.
+    # "ema_decay" (e.g. 0.999) keeps an exponential moving average of the
+    # weights; that average is what gets validated and saved.
+    lr_schedule = config.get("lr_schedule")
+    warmup_steps = config.get("warmup_steps", 0)
+    ema_decay = config.get("ema_decay")
+    ema_weights = None
+
     cutoffs = np.linspace(0.0, 1.0, 101).tolist()
 
     metrics = [
@@ -262,6 +272,13 @@ def train(model, config, data_processor):
                 negative_class_weight = negative_class_weight_list[i]
                 break
 
+        if lr_schedule == "cosine":
+            lr_max, lr_min = learning_rates_list[0], learning_rates_list[-1]
+            if training_step <= warmup_steps:
+                learning_rate = lr_max * training_step / warmup_steps
+            else:
+                progress = (training_step - warmup_steps) / max(1, training_steps_max - warmup_steps)
+                learning_rate = lr_min + 0.5 * (lr_max - lr_min) * (1 + np.cos(np.pi * progress))
         model.optimizer.learning_rate.assign(learning_rate)
 
         augmentation_policy = {
@@ -298,6 +315,13 @@ def train(model, config, data_processor):
             sample_weight=combined_weights,
         )
 
+        if ema_decay:
+            if ema_weights is None:
+                ema_weights = [tf.Variable(w, trainable=False) for w in model.weights]
+            else:
+                for e, w in zip(ema_weights, model.weights):
+                    e.assign(ema_decay * e + (1 - ema_decay) * w)
+
         # Print the running statistics in the current validation epoch
         print(
             "Validation Batch #{:d}: Accuracy = {:.3f}; Recall = {:.3f}; Precision = {:.3f}; Loss = {:.4f}; Mini-Batch #{:d}".format(
@@ -313,6 +337,10 @@ def train(model, config, data_processor):
 
         is_last_step = training_step == training_steps_max
         if (training_step % config["eval_step_interval"]) == 0 or is_last_step:
+            if ema_weights is not None:
+                # Validate and save the averaged weights; training resumes from the raw ones.
+                raw_weights = model.get_weights()
+                model.set_weights([e.numpy() for e in ema_weights])
             logging.info(
                 "Step #%d: rate %f, accuracy %.2f%%, recall %.2f%%, precision %.2f%%, cross entropy %f",
                 *(
@@ -456,6 +484,8 @@ def train(model, config, data_processor):
                 (best_maximization_quantity * 100),
                 best_no_faph_cutoff,
             )
+            if ema_weights is not None and not is_last_step:
+                model.set_weights(raw_weights)
 
     # Save checkpoint after training
     checkpoint.save(file_prefix=checkpoint_prefix)
