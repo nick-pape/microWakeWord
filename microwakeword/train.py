@@ -362,6 +362,7 @@ def train(model, config, data_processor):
                 tf.summary.scalar("recall", result[2], step=training_step)
                 tf.summary.scalar("precision", result[3], step=training_step)
                 tf.summary.scalar("auc", result[8], step=training_step)
+                tf.summary.scalar("learning_rate", learning_rate, step=training_step)
                 train_writer.flush()
 
             model.save_weights(
