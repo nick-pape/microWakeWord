@@ -316,7 +316,6 @@ def train(model, config, data_processor):
             n = len(train_fingerprints)
             fp = train_fingerprints.astype(np.float32)
             gt = train_ground_truth.astype(np.float32).reshape(-1)
-            w = np.asarray(combined_weights, dtype=np.float32).reshape(-1)
             perm = np.random.permutation(n)
             lam = np.ones(n, np.float32)
             mix = np.random.rand(n) < mix_up_prob
@@ -332,10 +331,12 @@ def train(model, config, data_processor):
                     fp[i, :, k:] = fp[perm[i], :, k:]
                     lam[i] = k / bands
             gt = lam * gt + (1 - lam) * gt[perm]
-            w = lam * w + (1 - lam) * w[perm]
             train_fingerprints = fp
             train_ground_truth = gt.reshape(-1, 1)
-            combined_weights = w.reshape(np.shape(combined_weights))
+            # combined_weights is left as computed above. Note it is a (batch,
+            # batch) matrix (sample weights of shape (batch,) times class weights
+            # of shape (batch, 1)), so Keras applies the class weights per batch,
+            # not per example; blending it per example would change that.
 
         result = model.train_on_batch(
             train_fingerprints,
