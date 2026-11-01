@@ -309,6 +309,34 @@ def train(model, config, data_processor):
             train_ground_truth
         )
 
+        # MixUp and FreqMix (the config keys existed but nothing applied them):
+        # blend a share of the batch with other examples, the original kept
+        # dominant, labels and weights blended in the same proportion.
+        if mix_up_prob > 0 or freq_mix_prob > 0:
+            n = len(train_fingerprints)
+            fp = train_fingerprints.astype(np.float32)
+            gt = train_ground_truth.astype(np.float32).reshape(-1)
+            w = np.asarray(combined_weights, dtype=np.float32).reshape(-1)
+            perm = np.random.permutation(n)
+            lam = np.ones(n, np.float32)
+            mix = np.random.rand(n) < mix_up_prob
+            if mix.any():
+                b = np.random.beta(0.4, 0.4, n).astype(np.float32)
+                lam = np.where(mix, np.maximum(b, 1 - b), 1.0).astype(np.float32)
+                fp = lam[:, None, None] * fp + (1 - lam)[:, None, None] * fp[perm]
+            fmix = (np.random.rand(n) < freq_mix_prob) & ~mix
+            if fmix.any():
+                bands = fp.shape[-1]
+                for i in np.flatnonzero(fmix):
+                    k = np.random.randint(bands // 2, bands)  # keep the lower k bands
+                    fp[i, :, k:] = fp[perm[i], :, k:]
+                    lam[i] = k / bands
+            gt = lam * gt + (1 - lam) * gt[perm]
+            w = lam * w + (1 - lam) * w[perm]
+            train_fingerprints = fp
+            train_ground_truth = gt.reshape(-1, 1)
+            combined_weights = w.reshape(np.shape(combined_weights))
+
         result = model.train_on_batch(
             train_fingerprints,
             train_ground_truth,

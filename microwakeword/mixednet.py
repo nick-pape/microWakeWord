@@ -74,6 +74,12 @@ def model_parameters(parser_nn):
         help="apply max pool instead of average pool before final convolution and sigmoid activation",
     )
     parser_nn.add_argument(
+        "--dropout",
+        type=float,
+        default=0.0,
+        help="Dropout rate before the output layer (0 = none)",
+    )
+    parser_nn.add_argument(
         "--first_conv_filters",
         type=int,
         default=32,
@@ -381,6 +387,8 @@ def model(flags, shape, batch_size):
                 net = tf.keras.layers.AveragePooling2D(pool_size=(net.shape[1], 1))(net)
 
     net = tf.keras.layers.Flatten()(net)
+    if getattr(flags, "dropout", 0.0) > 0:
+        net = tf.keras.layers.Dropout(flags.dropout)(net)  # training only; a no-op in inference
     net = tf.keras.layers.Dense(1, activation="sigmoid")(net)
 
     return tf.keras.Model(input_audio, net)
