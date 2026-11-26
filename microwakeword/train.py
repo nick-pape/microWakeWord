@@ -171,6 +171,7 @@ def train(model, config, data_processor):
         learning_rates_list = [0.001]
     if not (mix_up_prob_list := config.get("mix_up_augmentation_prob")):
         mix_up_prob_list = [0.0]
+    per_example_class_weights = bool(config.get("per_example_class_weights", False))
     if not (freq_mix_prob_list := config.get("freq_mix_augmentation_prob")):
         freq_mix_prob_list = [0.0]
     if not (time_mask_max_size_list := config.get("time_mask_max_size")):
@@ -308,6 +309,14 @@ def train(model, config, data_processor):
         combined_weights = train_sample_weights * np.vectorize(class_weights.get)(
             train_ground_truth
         )
+        # Upstream bug: sample weights (batch,) times class weights (batch, 1)
+        # broadcast to (batch, batch), which Keras reduces to the batch-mean
+        # class weight times the unweighted loss, so the class weights never
+        # weigh individual examples. per_example_class_weights fixes that.
+        if per_example_class_weights:
+            combined_weights = train_sample_weights.reshape(-1) * np.vectorize(
+                class_weights.get
+            )(train_ground_truth.reshape(-1))
 
         # MixUp and FreqMix (the config keys existed but nothing applied them):
         # blend a share of the batch with other examples, the original kept
@@ -333,10 +342,10 @@ def train(model, config, data_processor):
             gt = lam * gt + (1 - lam) * gt[perm]
             train_fingerprints = fp
             train_ground_truth = gt.reshape(-1, 1)
-            # combined_weights is left as computed above. Note it is a (batch,
-            # batch) matrix (sample weights of shape (batch,) times class weights
-            # of shape (batch, 1)), so Keras applies the class weights per batch,
-            # not per example; blending it per example would change that.
+            if per_example_class_weights:
+                combined_weights = lam * combined_weights + (1 - lam) * combined_weights[perm]
+            # Otherwise combined_weights is the (batch, batch) matrix above and
+            # is left as is.
 
         result = model.train_on_batch(
             train_fingerprints,
